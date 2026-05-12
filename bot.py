@@ -3,16 +3,17 @@ import os
 import csv
 import io
 import urllib.request
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 import pytz
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ВСТАВТЕ_ТОКЕН")
 SPREADSHEET_ID = "1TH0xjDIvrexAU1B8bdIK5DxFMlRUd_nlYe5rDSyj3fU"
 SHEET_GID = "1429881371"
 CLASS_NAME = "10а"
 TIMEZONE = pytz.timezone("Europe/Kyiv")
+ADMIN_ID = 1541236181
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -92,14 +93,24 @@ LUNCH_MENU = {
 
 _cache = {}
 _cache_date = None
+_logs = []
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton("📚 Зараз"), KeyboardButton("📅 Сьогодні"), KeyboardButton("📅 Завтра")],
-        [KeyboardButton("🗓 Тиждень"), KeyboardButton("🍽 Меню")],
+        [KeyboardButton("🗓 Тиждень"), KeyboardButton("🍽 Меню сьогодні"), KeyboardButton("🍽 Меню завтра")],
     ],
     resize_keyboard=True
 )
+
+
+def log_action(user, action):
+    now = datetime.now(TIMEZONE).strftime("%d.%m %H:%M")
+    name = user.full_name
+    uid = user.id
+    _logs.append(f"{now} | {name} ({uid}) | {action}")
+    if len(_logs) > 200:
+        _logs.pop(0)
 
 
 def fetch_csv():
@@ -249,13 +260,16 @@ def fmt_day(day, ds):
     return msg
 
 
-def get_lunch_text():
+def get_lunch_text(tomorrow=False):
     wd = datetime.now(TIMEZONE).weekday()
+    if tomorrow:
+        wd = (wd + 1) % 7
     if wd >= 5:
-        return "🎉 Сьогодні вихідний — їдальня не працює!"
+        return "🎉 Вихідний — їдальня не працює!"
     day = DAY_NAMES[wd]
+    label = "завтра" if tomorrow else "сьогодні"
     menu = LUNCH_MENU.get(day, {})
-    msg = f"🍽 *Меню на {day}*\n\n"
+    msg = f"🍽 *Меню на {label} ({day})*\n\n"
     msg += f"☕ *Перекус:*\n{menu.get('перекус', '—')}\n\n"
     msg += f"🍴 *Обід:*\n{menu.get('обід', '—')}\n\n"
     msg += f"🍰 *Полуденок:*\n{menu.get('полуденок', '—')}"
@@ -263,6 +277,7 @@ def get_lunch_text():
 
 
 async def cmd_start(u: Update, c):
+    log_action(u.message.from_user, "/start")
     await u.message.reply_text(
         "👋 Привіт! Я бот розкладу *10А* 🎒\n\nОбери що тебе цікавить:",
         parse_mode="Markdown",
@@ -271,10 +286,12 @@ async def cmd_start(u: Update, c):
 
 
 async def cmd_now(u: Update, c):
+    log_action(u.message.from_user, "Зараз")
     await u.message.reply_text(fmt_status(get_status(get_schedule())), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_today(u: Update, c):
+    log_action(u.message.from_user, "Сьогодні")
     wd = datetime.now(TIMEZONE).weekday()
     if wd >= 5:
         await u.message.reply_text("🎉 Вихідний!", reply_markup=MAIN_KEYBOARD)
@@ -284,6 +301,7 @@ async def cmd_today(u: Update, c):
 
 
 async def cmd_tomorrow(u: Update, c):
+    log_action(u.message.from_user, "Завтра")
     wd = (datetime.now(TIMEZONE).weekday() + 1) % 7
     if wd >= 5:
         await u.message.reply_text("🎉 Завтра вихідний!", reply_markup=MAIN_KEYBOARD)
@@ -293,18 +311,37 @@ async def cmd_tomorrow(u: Update, c):
 
 
 async def cmd_week(u: Update, c):
+    log_action(u.message.from_user, "Тиждень")
     s = get_schedule()
     text = "\n".join(fmt_day(d, s.get(d, {})) for d in DAY_NAMES.values())
     await u.message.reply_text(text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_day(u: Update, c, di: int):
+    log_action(u.message.from_user, f"День {di}")
     day = DAY_NAMES[di]
     await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_lunch(u: Update, c):
+    log_action(u.message.from_user, "Меню сьогодні")
     await u.message.reply_text(get_lunch_text(), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
+
+
+async def cmd_lunch_tomorrow(u: Update, c):
+    log_action(u.message.from_user, "Меню завтра")
+    await u.message.reply_text(get_lunch_text(tomorrow=True), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
+
+
+async def cmd_logs(u: Update, c):
+    if u.message.from_user.id != ADMIN_ID:
+        await u.message.reply_text("⛔ Немає доступу")
+        return
+    if not _logs:
+        await u.message.reply_text("📋 Логів ще немає")
+        return
+    text = "📋 *Останні дії:*\n\n" + "\n".join(_logs[-50:])
+    await u.message.reply_text(text, parse_mode="Markdown")
 
 
 async def handle_buttons(u: Update, c):
@@ -317,8 +354,10 @@ async def handle_buttons(u: Update, c):
         await cmd_tomorrow(u, c)
     elif text == "🗓 Тиждень":
         await cmd_week(u, c)
-    elif text == "🍽 Меню":
+    elif text == "🍽 Меню сьогодні":
         await cmd_lunch(u, c)
+    elif text == "🍽 Меню завтра":
+        await cmd_lunch_tomorrow(u, c)
 
 
 def main():
@@ -334,6 +373,7 @@ def main():
     app.add_handler(CommandHandler("thu", lambda u, c: cmd_day(u, c, 3)))
     app.add_handler(CommandHandler("fri", lambda u, c: cmd_day(u, c, 4)))
     app.add_handler(CommandHandler("lunch", cmd_lunch))
+    app.add_handler(CommandHandler("logs", cmd_logs))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     logger.info("Бот запущено!")
     app.run_polling()
