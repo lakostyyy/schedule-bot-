@@ -5,8 +5,8 @@ import io
 import urllib.request
 from datetime import datetime, time as dtime
 import pytz
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "ВСТАВТЕ_ТОКЕН")
 SPREADSHEET_ID = "1TH0xjDIvrexAU1B8bdIK5DxFMlRUd_nlYe5rDSyj3fU"
@@ -62,8 +62,44 @@ ROOMS = {
     "П'ЯТНИЦЯ": {1:"501",2:"205",3:"304",4:"306",5:"305",6:"206",7:"Шахи Сергій",8:"—"},
 }
 
+LUNCH_MENU = {
+    "ПОНЕДІЛОК": {
+        "перекус": "🥪 Бутерброди з сиром, шинкою, яблуко, апельсин, банан, печиво, компот",
+        "обід": "🍲 Суп курячий з яйцем та грінками\n🍝 Мак енд чіз / Булгур\n🍗 Чілі корн карне / фрикадельки курячі парові\n🥗 Салат з маринованих огірків та капусти",
+        "полуденок": "🥞 Млинці з джемом, сиром, узвар",
+    },
+    "ВІВТОРОК": {
+        "перекус": "🧁 Домашній кекс з родзинками, банан, апельсин, яблуко, узвар",
+        "обід": "🍲 Борщ червоний український зі сметаною\n🍚 Плов з булгура та свининою / макарони\n🥦 Овочі парові / салат з червоної капусти з соусом «вінігрет»",
+        "полуденок": "🍎 Шарлотка з яблуками, компот ягідний",
+    },
+    "СЕРЕДА": {
+        "перекус": "🍳 Фрітата з сиром, печиво, фрукти, компот",
+        "обід": "🍲 Сочевичний суп-пюре\n🥟 Пельмені домашні зі сметаною, кетчупом / гречка з вершковим маслом\n🥔 Вареники з картоплею / куряче філе печене\n🥗 Вінегрет",
+        "полуденок": "🥞 Панкейк з джемом або сметаною, компот ягідний",
+    },
+    "ЧЕТВЕР": {
+        "перекус": "🥧 Пиріг закритий з яйцем та шпинатом, яблука, банани, апельсини, узвар",
+        "обід": "🍲 Мінестроне\n🍚 Рис розсипчастий / відварна картопля з вершковим маслом\n🐟 Рибні стіки / котлети курячі\n🥕 Морква по-корейськи / Капуста квашена",
+        "полуденок": "🥐 Слойка з начинкою, компот ягідний",
+    },
+    "П'ЯТНИЦЯ": {
+        "перекус": "🥧 Пиріг ягідний, яблуко, банан, апельсин, компот ягідний",
+        "обід": "🍲 Суп квасолевий\n🌾 Булгур / макарони з сиром\n🍗 Ліниві голубці / філе куряче печене\n🥗 Асорті овочеве",
+        "полуденок": "🧀 Запіканка сирна із сметаною, компот ягідний",
+    },
+}
+
 _cache = {}
 _cache_date = None
+
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton("📚 Зараз"), KeyboardButton("📅 Сьогодні"), KeyboardButton("📅 Завтра")],
+        [KeyboardButton("🗓 Тиждень"), KeyboardButton("🍽 Меню")],
+    ],
+    resize_keyboard=True
+)
 
 
 def fetch_csv():
@@ -213,90 +249,76 @@ def fmt_day(day, ds):
     return msg
 
 
-LUNCH_MENU = {
-    "ПОНЕДІЛОК": {
-        "перекус": "🥪 Бутерброди з сиром, шинкою, яблуко, апельсин, банан, печиво, компот",
-        "обід": "🍲 Суп курячий з яйцем та грінками\n🍝 Мак енд чіз / Булгур\n🍗 Чілі корн карне / фрикадельки курячі парові\n🥗 Салат з маринованих огірків та капусти",
-        "полуденок": "🥞 Млинці з джемом, сиром, узвар",
-    },
-    "ВІВТОРОК": {
-        "перекус": "🧁 Домашній кекс з родзинками, банан, апельсин, яблуко, узвар",
-        "обід": "🍲 Борщ червоний український зі сметаною\n🍚 Плов з булгура та свининою / макарони\n🥦 Овочі парові / салат з червоної капусти з соусом «вінігрет»",
-        "полуденок": "🍎 Шарлотка з яблуками, компот ягідний",
-    },
-    "СЕРЕДА": {
-        "перекус": "🍳 Фрітата з сиром, печиво, фрукти, компот",
-        "обід": "🍲 Сочевичний суп-пюре\n🥟 Пельмені домашні зі сметаною, кетчупом / гречка з вершковим маслом\n🥔 Вареники з картоплею / куряче філе печене\n🥗 Вінегрет",
-        "полуденок": "🥞 Панкейк з джемом або сметаною, компот ягідний",
-    },
-    "ЧЕТВЕР": {
-        "перекус": "🥧 Пиріг закритий з яйцем та шпинатом, яблука, банани, апельсини, узвар",
-        "обід": "🍲 Мінестроне\n🍚 Рис розсипчастий / відварна картопля з вершковим маслом\n🐟 Рибні стіки / котлети курячі\n🥕 Морква по-корейськи / Капуста квашена",
-        "полуденок": "🥐 Слойка з начинкою, компот ягідний",
-    },
-    "П'ЯТНИЦЯ": {
-        "перекус": "🥧 Пиріг ягідний, яблуко, банан, апельсин, компот ягідний",
-        "обід": "🍲 Суп квасолевий\n🌾 Булгур / макарони з сиром\n🍗 Ліниві голубці / філе куряче печене\n🥗 Асорті овочеве",
-        "полуденок": "🧀 Запіканка сирна із сметаною, компот ягідний",
-    },
-}
-
-
-async def cmd_lunch(u: Update, c):
+def get_lunch_text():
     wd = datetime.now(TIMEZONE).weekday()
     if wd >= 5:
-        await u.message.reply_text("🎉 Сьогодні вихідний — їдальня не працює!")
-        return
+        return "🎉 Сьогодні вихідний — їдальня не працює!"
     day = DAY_NAMES[wd]
     menu = LUNCH_MENU.get(day, {})
     msg = f"🍽 *Меню на {day}*\n\n"
     msg += f"☕ *Перекус:*\n{menu.get('перекус', '—')}\n\n"
     msg += f"🍴 *Обід:*\n{menu.get('обід', '—')}\n\n"
     msg += f"🍰 *Полуденок:*\n{menu.get('полуденок', '—')}"
-    await u.message.reply_text(msg, parse_mode="Markdown")
+    return msg
 
 
 async def cmd_start(u: Update, c):
     await u.message.reply_text(
-        "👋 Привіт! Бот розкладу *10А*\n\n"
-        "/now — що зараз\n/today — сьогодні\n/tomorrow — завтра\n"
-        "/week — весь тиждень\n/mon /tue /wed /thu /fri — конкретний день\n"
-        "/lunch — меню їдальні на сьогодні",
-        parse_mode="Markdown"
+        "👋 Привіт! Я бот розкладу *10А* 🎒\n\nОбери що тебе цікавить:",
+        parse_mode="Markdown",
+        reply_markup=MAIN_KEYBOARD
     )
 
 
 async def cmd_now(u: Update, c):
-    await u.message.reply_text(fmt_status(get_status(get_schedule())), parse_mode="Markdown")
+    await u.message.reply_text(fmt_status(get_status(get_schedule())), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_today(u: Update, c):
     wd = datetime.now(TIMEZONE).weekday()
     if wd >= 5:
-        await u.message.reply_text("🎉 Вихідний!")
+        await u.message.reply_text("🎉 Вихідний!", reply_markup=MAIN_KEYBOARD)
         return
     day = DAY_NAMES[wd]
-    await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown")
+    await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_tomorrow(u: Update, c):
     wd = (datetime.now(TIMEZONE).weekday() + 1) % 7
     if wd >= 5:
-        await u.message.reply_text("🎉 Завтра вихідний!")
+        await u.message.reply_text("🎉 Завтра вихідний!", reply_markup=MAIN_KEYBOARD)
         return
     day = DAY_NAMES[wd]
-    await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown")
+    await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_week(u: Update, c):
     s = get_schedule()
     text = "\n".join(fmt_day(d, s.get(d, {})) for d in DAY_NAMES.values())
-    await u.message.reply_text(text, parse_mode="Markdown")
+    await u.message.reply_text(text, parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
 
 
 async def cmd_day(u: Update, c, di: int):
     day = DAY_NAMES[di]
-    await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown")
+    await u.message.reply_text(fmt_day(day, get_schedule().get(day, {})), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
+
+
+async def cmd_lunch(u: Update, c):
+    await u.message.reply_text(get_lunch_text(), parse_mode="Markdown", reply_markup=MAIN_KEYBOARD)
+
+
+async def handle_buttons(u: Update, c):
+    text = u.message.text
+    if text == "📚 Зараз":
+        await cmd_now(u, c)
+    elif text == "📅 Сьогодні":
+        await cmd_today(u, c)
+    elif text == "📅 Завтра":
+        await cmd_tomorrow(u, c)
+    elif text == "🗓 Тиждень":
+        await cmd_week(u, c)
+    elif text == "🍽 Меню":
+        await cmd_lunch(u, c)
 
 
 def main():
@@ -312,6 +334,7 @@ def main():
     app.add_handler(CommandHandler("thu", lambda u, c: cmd_day(u, c, 3)))
     app.add_handler(CommandHandler("fri", lambda u, c: cmd_day(u, c, 4)))
     app.add_handler(CommandHandler("lunch", cmd_lunch))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
     logger.info("Бот запущено!")
     app.run_polling()
 
