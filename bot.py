@@ -54,6 +54,14 @@ FALLBACK_SCHEDULE = {
     "П'ЯТНИЦЯ": {1:"Емпатика",2:"Англійська мова",3:"Українська мова",4:"Англ 1",5:"Хімія",6:"Захист України"},
 }
 
+ROOMS = {
+    "ПОНЕДІЛОК": {1:"501",2:"206",3:"302",4:"205",5:"305",6:"—",7:"Шахи Сергій",8:"303"},
+    "ВІВТОРОК":  {1:"304",2:"204",3:"206",4:"206",5:"205",6:"203",7:"306",8:"Стадіон"},
+    "СЕРЕДА":    {1:"04",2:"04",3:"301",4:"301",5:"205",6:"304",7:"303",8:"203"},
+    "ЧЕТВЕР":    {1:"204",2:"205",3:"204",4:"204",5:"Сушка",6:"206",7:"206",8:"—"},
+    "П'ЯТНИЦЯ": {1:"501",2:"205",3:"304",4:"306",5:"305",6:"206",7:"Шахи Сергій",8:"—"},
+}
+
 _cache = {}
 _cache_date = None
 
@@ -132,14 +140,17 @@ def get_status(schedule):
         return {"type": "weekend"}
     day = DAY_NAMES[wd]
     ds = schedule.get(day, {})
+    dr = ROOMS.get(day, {})
     for i, (s, e) in enumerate(LESSON_TIMES):
         if t2m(s) <= nm < t2m(e):
             return {
                 "type": "lesson",
                 "num": i+1,
                 "subject": ds.get(i+1, "—"),
+                "room": dr.get(i+1, ""),
                 "remaining": t2m(e) - nm,
                 "next": ds.get(i+2),
+                "next_room": dr.get(i+2, ""),
                 "break": BREAK_TIMES[i] if i < len(BREAK_TIMES) else None
             }
     for i, (s, e, l, lb) in enumerate(BREAK_TIMES):
@@ -149,10 +160,11 @@ def get_status(schedule):
                 "label": lb,
                 "remaining": t2m(e) - nm,
                 "next_num": i+2,
-                "next": ds.get(i+2, "—")
+                "next": ds.get(i+2, "—"),
+                "next_room": dr.get(i+2, ""),
             }
     if nm < t2m(LESSON_TIMES[0][0]):
-        return {"type": "before", "first": ds.get(1, "—"), "min": t2m(LESSON_TIMES[0][0]) - nm}
+        return {"type": "before", "first": ds.get(1, "—"), "first_room": dr.get(1, ""), "min": t2m(LESSON_TIMES[0][0]) - nm}
     return {"type": "after"}
 
 
@@ -161,28 +173,40 @@ def fmt_status(s):
     if t == "weekend":
         return "🎉 Сьогодні вихідний!"
     if t == "lesson":
-        m = f"📚 *{s['num']} урок:* {s['subject']}\n⏳ Залишилось: *{s['remaining']} хв*"
+        room = s.get("room", "")
+        room_str = f" 🚪 Каб. *{room}*" if room and room != "—" else ""
+        m = f"📚 *{s['num']} урок:* {s['subject']}{room_str}\n⏳ Залишилось: *{s['remaining']} хв*"
         if s["break"]:
             _, _, l, lb = s["break"]
             m += f"\n{'🍽' if lb=='обід' else '☕'} Далі: {lb} ({l} хв)"
         if s["next"]:
-            m += f"\n📖 Після: {s['next']}"
+            next_room = s.get("next_room", "")
+            next_room_str = f" (каб. {next_room})" if next_room and next_room != "—" else ""
+            m += f"\n📖 Після: {s['next']}{next_room_str}"
         return m
     if t == "break":
         e = "🍽" if s["label"] == "обід" else "☕"
-        return f"{e} *{s['label'].capitalize()}*\n⏳ Залишилось: *{s['remaining']} хв*\n📚 Далі: {s['next_num']} урок — {s['next']}"
+        room = s.get("next_room", "")
+        room_str = f" (каб. {room})" if room and room != "—" else ""
+        return f"{e} *{s['label'].capitalize()}*\n⏳ Залишилось: *{s['remaining']} хв*\n📚 Далі: {s['next_num']} урок — {s['next']}{room_str}"
     if t == "before":
-        return f"🔔 До першого уроку: *{s['min']} хв*\n📖 Перший: {s['first']}"
+        room = s.get("first_room", "")
+        room_str = f" (каб. {room})" if room and room != "—" else ""
+        return f"🔔 До першого уроку: *{s['min']} хв*\n📖 Перший: {s['first']}{room_str}"
     return "🏠 Уроки закінчились!"
 
 
 def fmt_day(day, ds):
     if not ds:
         return f"📅 *{day}*\nНемає даних"
+    dr = ROOMS.get(day, {})
     msg = f"📅 *{day}*\n\n"
     for i, (s, e) in enumerate(LESSON_TIMES):
         num = i + 1
-        msg += f"`{num}.` {s.strftime('%H:%M')}–{e.strftime('%H:%M')} {ds.get(num, '—')}\n"
+        subj = ds.get(num, "—")
+        room = dr.get(num, "")
+        room_str = f" 🚪{room}" if room and room != "—" else ""
+        msg += f"`{num}.` {s.strftime('%H:%M')}–{e.strftime('%H:%M')} {subj}{room_str}\n"
         if i < len(BREAK_TIMES):
             _, _, l, lb = BREAK_TIMES[i]
             msg += f"     {'🍽' if lb=='обід' else '☕'} {lb} {l} хв\n"
